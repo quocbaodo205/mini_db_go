@@ -77,6 +77,20 @@ func NewKeyEntryFromInt(input int64) KeyEntry {
 	}
 }
 
+// our key: [0 0 0 0 255 255 1 2]
+// input  : [0 0 0 0 0 0 1 2]
+func NewKeyEntryFromBytes(input []byte) KeyEntry {
+	data_len := len(input)
+	var data [MAX_KEY_SIZE]uint8
+	for i := MAX_KEY_SIZE - data_len; i < MAX_KEY_SIZE; i += 1 {
+		data[i] = input[i-(MAX_KEY_SIZE-data_len)] // data[10] = slice[0] | data[11] = slice[1] ...
+	}
+	return KeyEntry{
+		len:  uint16(data_len),
+		data: data,
+	}
+}
+
 func (k *KeyEntry) write_to_buffer(buffer *bytes.Buffer) {
 	var err error
 	err = binary.Write(buffer, binary.BigEndian, k.len)
@@ -190,6 +204,17 @@ func (node *BTreeInternalPage) InsertKV(insertKey *KeyEntry, insertChildPPtr uin
 	node.keys[pos+1] = *insertKey
 	node.children[pos+1] = insertChildPPtr
 	node.nkey += 1
+}
+
+func (node *BTreeInternalPage) DelKVAtPos(pos int) {
+	for i := pos + 1; i < int(node.nkey)-1; i++ {
+		node.keys[i] = node.keys[i+1]
+		node.children[i] = node.children[i+1]
+	}
+	node.nkey -= 1
+	node.keys[int(node.nkey)] = KeyEntry{}
+	node.children[int(node.nkey)] = 0
+
 }
 
 // Split a node into 2 equal part
