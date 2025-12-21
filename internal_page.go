@@ -53,8 +53,6 @@ func (p *MetaPage) read_from_buffer(buffer *bytes.Buffer) {
 
 // =========================================================================
 
-const MAX_KEY_SIZE = 8
-
 // 3: [1, 7, 255]
 // [0 0 0 0 0 0 1 7 255]
 type KeyEntry struct {
@@ -151,6 +149,7 @@ func (p *BTreeInternalPage) write_to_buffer(buffer *bytes.Buffer) {
 	}
 }
 
+// isReadHeader also read a header, used in case it's not yet read.
 func (p *BTreeInternalPage) read_from_buffer(buffer *bytes.Buffer, isReadHeader bool) {
 	var err error
 	if isReadHeader {
@@ -232,6 +231,10 @@ func (node *BTreeInternalPage) Split() BTreeInternalPage {
 		node.children[i] = 0
 	}
 	newNode := BTreeInternalPage{
+		header: PageHeader{
+			page_type:         1,
+			next_page_pointer: 0,
+		},
 		nkey:     node.nkey - pos,
 		keys:     newKeys,
 		children: newChildren,

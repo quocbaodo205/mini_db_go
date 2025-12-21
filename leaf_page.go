@@ -7,8 +7,6 @@ import (
 
 // =========================================================================
 
-const MAX_VAL_SIZE = 8
-
 // 3: [1, 7, 255]
 // [0 0 0 0 0 0 1 7 255]
 type KeyVal struct {
@@ -28,12 +26,12 @@ func NewKeyValFromInt(inputKey int64, inputVal int64) KeyVal {
 		key[i] = data_slice[i-(MAX_KEY_SIZE-key_len)] // data[10] = slice[0] | data[11] = slice[1] ...
 	}
 	buf = new(bytes.Buffer)
-	binary.Write(buf, binary.BigEndian, inputKey)
+	binary.Write(buf, binary.BigEndian, inputVal)
 	data_slice = buf.Bytes()
 	val_len := len(data_slice)
 	var val [MAX_VAL_SIZE]uint8
 	for i := MAX_VAL_SIZE - val_len; i < MAX_VAL_SIZE; i += 1 {
-		key[i] = data_slice[i-(MAX_VAL_SIZE-val_len)] // data[10] = slice[0] | data[11] = slice[1] ...
+		val[i] = data_slice[i-(MAX_VAL_SIZE-val_len)] // data[10] = slice[0] | data[11] = slice[1] ...
 	}
 	return KeyVal{
 		keylen: uint16(key_len),
@@ -52,7 +50,7 @@ func NewKeyValFromBytes(inputKey []byte, inputVal []byte) KeyVal {
 	val_len := len(inputVal)
 	var val [MAX_VAL_SIZE]uint8
 	for i := MAX_VAL_SIZE - val_len; i < MAX_VAL_SIZE; i += 1 {
-		key[i] = inputVal[i-(MAX_VAL_SIZE-val_len)] // data[10] = slice[0] | data[11] = slice[1] ...
+		val[i] = inputVal[i-(MAX_VAL_SIZE-val_len)] // data[10] = slice[0] | data[11] = slice[1] ...
 	}
 	return KeyVal{
 		keylen: uint16(key_len),
@@ -110,7 +108,7 @@ func (k *KeyVal) compare(rhs *KeyVal) int {
 // Define leaf node
 type BTreeLeafPage struct {
 	header PageHeader
-	nkv    int
+	nkv    uint16
 	kv     [LEAF_MAX_KV]KeyVal
 }
 
@@ -143,7 +141,7 @@ func (p *BTreeLeafPage) read_from_buffer(buffer *bytes.Buffer, isReadHeader bool
 	if isReadHeader {
 		p.header.read_from_buffer(buffer)
 	}
-	err = binary.Read(buffer, binary.BigEndian, p.nkv)
+	err = binary.Read(buffer, binary.BigEndian, &p.nkv)
 	for i := 0; i < int(p.nkv); i += 1 {
 		p.kv[i].read_from_buffer(buffer)
 	}
@@ -167,9 +165,24 @@ func (node *BTreeLeafPage) FindLastLE(findKV *KeyVal) int {
 func (node *BTreeLeafPage) InsertKV(insertKV *KeyVal) {
 	// Find last less or equal as position to insert
 	pos := node.FindLastLE(insertKV)
+	if pos == -1 {
+		// Insert in the 0 position
+		pos = 0
+		if node.nkv > 0 {
+			for i := node.nkv - 1; int(i) >= 0; i-- {
+				node.kv[i+1] = node.kv[i]
+				if i == 0 {
+					break
+				}
+			}
+		}
+		node.kv[pos] = *insertKV
+		node.nkv += 1
+		return
+	}
 	// [ 1,4,7,| | ] -> insert 3
 	// [ 1,| |,4,7 ] -> insert 3
-	for i := node.nkv - 1; i > pos; i-- {
+	for i := node.nkv - 1; int(i) > pos; i-- {
 		node.kv[i+1] = node.kv[i]
 	}
 	node.kv[pos+1] = *insertKV
@@ -201,6 +214,10 @@ func (node *BTreeLeafPage) Split() BTreeLeafPage {
 		node.kv[i] = KeyVal{}
 	}
 	newNode := BTreeLeafPage{
+		header: PageHeader{
+			page_type:         2,
+			next_page_pointer: 0,
+		},
 		nkv: node.nkv - pos,
 		kv:  newKV,
 	}

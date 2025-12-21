@@ -2,9 +2,6 @@ package main
 
 import "fmt"
 
-const INTERNAL_MAX_KEY = 4
-const LEAF_MAX_KV = 4
-
 type Node any
 
 type BTreeInternalNode struct {
