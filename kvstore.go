@@ -5,13 +5,13 @@ type KV struct {
 	tree     BPTreeDisk
 }
 
-func (db *KV) Open() {
+func (kv *KV) Open() {
 	// Load or create new
-	db.tree = NewBPTreeDisk(db.fileName)
+	kv.tree = NewBPTreeDisk(kv.fileName)
 }
 
-func (db *KV) Get(key []byte) ([]byte, bool) {
-	res := db.tree.Find(key)
+func (kv *KV) Get(key []byte) ([]byte, bool) {
+	res := kv.tree.Find(key)
 	if res == nil {
 		var valueBytes []byte = make([]byte, 0)
 		return valueBytes, false
@@ -23,10 +23,10 @@ func (db *KV) Get(key []byte) ([]byte, bool) {
 	return valueBytes, true
 }
 
-func (db *KV) Set(key []byte, val []byte) {
-	db.tree.Set(key, val)
+func (kv *KV) Set(key []byte, val []byte) {
+	kv.tree.Set(key, val)
 }
 
-func (db *KV) Del(key []byte) bool {
-	return db.tree.Del(key)
+func (kv *KV) Del(key []byte) bool {
+	return kv.tree.Del(key)
 }

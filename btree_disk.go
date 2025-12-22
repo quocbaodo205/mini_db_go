@@ -8,7 +8,7 @@ import (
 
 // All constant for easier calculation
 const BLOCK_SIZE = 4096
-const MAX_KEY_SIZE = 8
+const MAX_KEY_SIZE = 16
 const MAX_VAL_SIZE = 32
 
 // Each internal page takes:
@@ -66,7 +66,7 @@ func (a *FileAllocator) writeAllToFile(file *os.File) {}
 func LoadFileAllocator(fileName string) FileAllocator {
 	// buffer := new(bytes.Buffer) // Buffer size = 0
 	// Step 1: Open file
-	file, err := os.OpenFile(fileName, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+	file, err := os.OpenFile(fileName, os.O_RDWR, 0644)
 	if err != nil {
 		panic(err)
 	}
