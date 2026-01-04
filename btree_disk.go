@@ -146,6 +146,14 @@ func (tree *BPTreeDisk) writeBufferToFile(buffer *bytes.Buffer, file *os.File) u
 	return last_ptr
 }
 
+// Return a disk pointer to this data
+func (tree *BPTreeDisk) writeBufferToFileAtPtr(buffer *bytes.Buffer, file *os.File, input_ptr uint64) {
+	_, err := file.WriteAt(buffer.Bytes(), int64(input_ptr))
+	if err != nil {
+		panic(err)
+	}
+}
+
 func (tree *BPTreeDisk) writeBufferToFileFirst(buffer *bytes.Buffer, file *os.File) {
 	_, err := file.WriteAt(buffer.Bytes(), 0)
 	if err != nil {
@@ -242,24 +250,31 @@ func (tree *BPTreeDisk) insertRecursive(node any, insertKey *KeyEntry, insertKV 
 			}
 			// After insert, check if need split.
 			if convert.nkey == INTERNAL_MAX_KEY {
+				// Allocate 2 pages: for new page and for old page
+				newPtr := tree.fileAllocator.alloc()
+				oldPtr := tree.fileAllocator.alloc()
 				newInternal := convert.Split()
+				newInternal.header.next_page_pointer = convert.header.next_page_pointer
+				newInternal.header.prev_page_pointer = oldPtr
 				if isDebugMode {
 					fmt.Printf("Need split, old = %v, new = %v\n", *convert, newInternal)
 				}
-				// Save current page
-				buffer.Reset()
-				convert.write_to_buffer(buffer)
-				oldPtr := tree.writeBufferToFile(buffer, file)
 				// Save new page
 				buffer.Reset()
 				newInternal.write_to_buffer(buffer)
-				newPtr := tree.writeBufferToFile(buffer, file)
+				tree.writeBufferToFileAtPtr(buffer, file, newPtr)
+				// Save current page
+				convert.header.next_page_pointer = newPtr
+				buffer.Reset()
+				convert.write_to_buffer(buffer)
+				tree.writeBufferToFileAtPtr(buffer, file, oldPtr)
 				return InsertResult{
 					node_ptr:       oldPtr,
 					node_promo_key: convert.keys[0],
 					new_node_ptr:   newPtr,
 					new_promo_key:  newInternal.keys[0],
 				}
+
 			} else {
 				// Save current page
 				buffer.Reset()
@@ -286,14 +301,19 @@ func (tree *BPTreeDisk) insertRecursive(node any, insertKey *KeyEntry, insertKV 
 		// After insert, check if need split.
 		if convert.nkv == LEAF_MAX_KV {
 			newLeaf := convert.Split()
-			// Save current page
-			buffer.Reset()
-			convert.write_to_buffer(buffer)
-			oldPtr := tree.writeBufferToFile(buffer, file)
+			newLeaf.header.next_page_pointer = convert.header.next_page_pointer
+			// Allocate 2 pages: for new page and for old page
+			newPtr := tree.fileAllocator.alloc()
+			oldPtr := tree.fileAllocator.alloc()
 			// Save new page
 			buffer.Reset()
 			newLeaf.write_to_buffer(buffer)
-			newPtr := tree.writeBufferToFile(buffer, file)
+			tree.writeBufferToFileAtPtr(buffer, file, newPtr)
+			// Save current page
+			convert.header.next_page_pointer = newPtr // Current.next = newPtr
+			buffer.Reset()
+			convert.write_to_buffer(buffer)
+			tree.writeBufferToFileAtPtr(buffer, file, oldPtr)
 			return InsertResult{
 				node_ptr:       oldPtr,
 				node_promo_key: getKeyEntryFromKeyVal(&convert.kv[0]),
@@ -637,6 +657,29 @@ func (tree *BPTreeDisk) delRecursive(node any, delKey *KeyEntry, delKV *KeyVal, 
 		convert := node.(*BTreeLeafPage)
 		convert.DelKV(delKV)
 		if convert.nkv == 0 {
+			prevPtr := convert.header.prev_page_pointer
+			nextPtr := convert.header.next_page_pointer
+			// Allocate 2 new node on file
+			newPrevPtr := tree.fileAllocator.alloc()
+			newNextPtr := tree.fileAllocator.alloc()
+			// Load page at previous:
+			tree.readBlockAtPointer(prevPtr, buffer, file)
+			lpage := BTreeLeafPage{}
+			lpage.read_from_buffer(buffer, true)
+			lpage.header.next_page_pointer = newNextPtr
+			// Save new previous page
+			buffer.Reset()
+			lpage.write_to_buffer(buffer)
+			tree.writeBufferToFileAtPtr(buffer, file, newPrevPtr)
+			// Load page at next:
+			tree.readBlockAtPointer(nextPtr, buffer, file)
+			lpage = BTreeLeafPage{}
+			lpage.read_from_buffer(buffer, true)
+			lpage.header.prev_page_pointer = newPrevPtr
+			// Save new previous page
+			buffer.Reset()
+			lpage.write_to_buffer(buffer)
+			tree.writeBufferToFileAtPtr(buffer, file, newNextPtr)
 			return DelResult{
 				node_ptr:       0,
 				node_promo_key: KeyEntry{},
@@ -701,4 +744,95 @@ func (tree *BPTreeDisk) Del(key []byte) bool {
 		tree.fileAllocator.free(x)
 	}
 	return true
+}
+
+// 10 <= x <= 50
+func (tree *BPTreeDisk) SeekGE(key []byte) *BIter {
+	buffer := new(bytes.Buffer) // Buffer size = 0
+	findKeyE := NewKeyEntryFromBytes(key)
+	var emptyVal []byte = make([]byte, 0)
+	findKeyV := NewKeyValFromBytes(key, emptyVal)
+	// Step 1: Open file
+	file, err := os.OpenFile(tree.fileName, os.O_RDWR, 0644)
+	if err != nil {
+		panic(err)
+	}
+	// defer file.Close() // Don't close the file, open for reading...
+	// Step 2: Read MetaPage
+	tree.readBlockAtPointer(0, buffer, file) // Buffer size = BLOCK_SIZE
+	metaPage := MetaPage{}
+	metaPage.read_from_buffer(buffer) // buffer size decrease
+
+	internalPage := BTreeInternalPage{}
+	// Step 2': Read first internal page
+	if metaPage.header.next_page_pointer != 0 {
+		tree.readBlockAtPointer(metaPage.header.next_page_pointer, buffer, file) // Buffer size = BLOCK_SIZE
+		internalPage.read_from_buffer(buffer, true)                              // Buffer size decrease
+	}
+
+	var node any
+	node = &internalPage
+
+	// Need to defined and get a path
+	iter := BIter{
+		path: []PathData{},
+		tree: tree,
+		file: file,
+	}
+
+	for {
+		if convert, ok := node.(*BTreeInternalPage); ok {
+			// fmt.Printf("internal page: %v\n", *convert)
+			pos := convert.FindLastLE(&findKeyE)
+			// fmt.Println("pos = ", pos)
+			if pos == -1 {
+				// No key that is less or equal: all key > findKey
+				pos = 0
+			}
+			iter.path = append(iter.path, PathData{
+				node:     node,
+				position: pos,
+			})
+			child := convert.children[pos]
+			buffer.Reset()
+			tree.readBlockAtPointer(child, buffer, file)
+			// Try to convert back to either leaf or internal
+			header := PageHeader{}
+			header.read_from_buffer(buffer)
+			var childNode any
+			if header.page_type == 1 {
+				// Internal page
+				ipage := BTreeInternalPage{header: header}
+				ipage.read_from_buffer(buffer, false)
+				childNode = &ipage
+			} else {
+				// Leaf page
+				lpage := BTreeLeafPage{header: header}
+				lpage.read_from_buffer(buffer, false)
+				childNode = &lpage
+			}
+			node = childNode
+		} else {
+			convert := node.(*BTreeLeafPage)
+			// fmt.Printf("leaf page: %v\n", *convert)
+			pos := convert.FindLastLE(&findKeyV)
+			// fmt.Println("pos = ", pos)
+			if pos == -1 {
+				pos = 0
+			}
+			foundKV := convert.kv[pos]
+
+			// Make sure >= findKey
+			if foundKV.compare(&findKeyV) < 0 {
+				pos += 1
+			}
+
+			iter.path = append(iter.path, PathData{
+				node:     node,
+				position: pos,
+			})
+
+			return &iter
+		}
+	}
 }

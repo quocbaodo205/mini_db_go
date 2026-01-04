@@ -12,6 +12,7 @@ import (
 type PageHeader struct {
 	page_type         uint8
 	next_page_pointer uint64
+	prev_page_pointer uint64
 }
 
 func (h *PageHeader) write_to_buffer(buffer *bytes.Buffer) {
@@ -21,6 +22,7 @@ func (h *PageHeader) write_to_buffer(buffer *bytes.Buffer) {
 	var err error
 	err = binary.Write(buffer, binary.BigEndian, h.page_type)
 	err = binary.Write(buffer, binary.BigEndian, h.next_page_pointer)
+	err = binary.Write(buffer, binary.BigEndian, h.prev_page_pointer)
 	if err != nil {
 		panic(err)
 	}
@@ -31,6 +33,7 @@ func (h *PageHeader) read_from_buffer(buffer *bytes.Buffer) {
 	var err error
 	binary.Read(buffer, binary.BigEndian, &h.page_type)
 	binary.Read(buffer, binary.BigEndian, &h.next_page_pointer)
+	binary.Read(buffer, binary.BigEndian, &h.prev_page_pointer)
 	if err != nil {
 		panic(err)
 	}

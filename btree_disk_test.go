@@ -57,6 +57,21 @@ func TestBTreeDisk(t *testing.T) {
 			t.Errorf("Find test failed: val not expected. Expected = %v, got %v", expected, *kv)
 		}
 	}
+	// Iter test: Get an iterator and next 10 times. Should have the correct kv
+	for i := 1; i <= maxNum-10; i++ {
+		// kv := test_db.Find(intToSlice(int64(i)))
+		iter := test_db.SeekGE(intToSlice(int64(i)))
+		for j := range 10 {
+			kv := iter.Deref()
+			expected := NewKeyValFromInt(int64(i+j), int64(i+j+5))
+			if kv != expected {
+				t.Errorf("Iter test failed for i = %d and j = %d: val not expected. Expected = %v, got %v", i, j, expected, kv)
+				return
+			}
+
+			iter.Next()
+		}
+	}
 	// Del test: del odd of them
 	for i := 1; i <= maxNum; i++ {
 		if i%2 == 0 {

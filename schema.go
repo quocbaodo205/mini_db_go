@@ -1,5 +1,10 @@
 package main
 
+import (
+	"bytes"
+	"encoding/binary"
+)
+
 // [INT, STRING (Not UTF-8)], BLOB, UUID, FLOAT, ...
 
 // Database -> Tables + internal tables (metadata, all tables definition)
@@ -25,6 +30,14 @@ type Value struct {
 type Record struct {
 	Cols []string
 	Vals []Value
+}
+
+// Basically a row
+// Cols[1] = 'date' -> Vals[1]
+type RangeRecord struct {
+	Cols      []string
+	ValStarts []Value
+	ValEnds   []Value
 }
 
 // Add data to a record
@@ -105,16 +118,80 @@ func checkRecord(tdef *TableDef, rec *Record) bool {
 	return true
 }
 
+// Check if all primary key presents and have all known columns
+// rec{Cols[name, date, age], Val: ['Adam', nil, 30]}
+// -> rec{Cols[name, age, date], Val: ['Adam', 30, nil]}
+func checkRangeRecord(tdef *TableDef, rec *RangeRecord) bool {
+	// TODO: Reorder and check here
+	if 1 == 1 {
+		return false
+	}
+	return true
+}
+
 // 10, ["Adam", 30] -> [10 4 A d a m 8 0 0 0 0 0 0 0 30 0]
 func encodeKey(prefix uint8, Vals []Value) []byte {
-	// TODO: Encoding it into []byte
-	res := make([]uint8, 0)
-	return res
+	// Prepare a buffer for bytes writing
+	var err error
+	buffer := new(bytes.Buffer) // Buffer size = 0
+	// First: Write the prefix
+	err = binary.Write(buffer, binary.BigEndian, prefix)
+	// How many vals are there
+	err = binary.Write(buffer, binary.BigEndian, uint8(len(Vals)))
+	for _, v := range Vals {
+		// For each v, write data:
+		// First, the type
+		err = binary.Write(buffer, binary.BigEndian, uint8(v.Type))
+		if v.Type == TYPE_INT64 {
+			// Just write the int64
+			err = binary.Write(buffer, binary.BigEndian, v.I64)
+		} else {
+			// Write the len
+			err = binary.Write(buffer, binary.BigEndian, uint8(len(v.Str)))
+			// Write the rest of the data.
+			buffer.Write(v.Str)
+		}
+	}
+	// No error handing here, just panic
+	if err != nil {
+		panic(err)
+	}
+	return buffer.Bytes() // Escape outside, will allocate on heap
 }
 
 func decodeVals(data []byte) []Value {
-	// TODO
+	// Make a byte buffer with the data.
+	var err error
+	buffer := new(bytes.Buffer) // Buffer size = 0
+	buffer.Write(data)
+	// First: Read the prefix. For val this should be discarded.
+	var prefix uint8
+	err = binary.Read(buffer, binary.BigEndian, &prefix)
+	// Next, read how many values
+	var n uint8
+	err = binary.Read(buffer, binary.BigEndian, &n)
 	res := make([]Value, 0)
+	for i := 0; i < int(n); i += 1 {
+		var v Value
+		var vtype uint8
+		err = binary.Read(buffer, binary.BigEndian, &vtype)
+		if vtype == TYPE_INT64 {
+			// Just read the int64
+			err = binary.Read(buffer, binary.BigEndian, &v.I64)
+		} else {
+			// Read the len
+			var l uint8
+			err = binary.Read(buffer, binary.BigEndian, &l)
+			var data []byte = make([]byte, l)
+			buffer.Read(data)
+			v.Str = data
+		}
+		res = append(res, v)
+	}
+	if err != nil {
+		panic(err)
+	}
+
 	return res
 }
 
@@ -145,6 +222,41 @@ func dbGet(db *DB, tdef *TableDef, rec *Record) bool {
 
 	// Res: rec{Cols[name, age, date], Val: ["Adam", 30, 20250101]}
 	return true
+}
+
+// SELECT * FROM People WHERE age >= 10 and age <= 30
+// -> Find: key = [.... (decode age = 10)] -> iter next
+func dbRangeGet(db *DB, tdef *TableDef, rRec *RangeRecord) ([]Record, bool) {
+	var allRecords = make([]Record, 0)
+	// Step 1: reorder columns
+	// rec{Cols[name, date, age], Val: ['Adam', nil, 30]}
+	// -> rec{Cols[name, age, date], Val: ['Adam', 30, nil]}
+	checkRecordRes := checkRangeRecord(tdef, rRec)
+	if !checkRecordRes {
+		return allRecords, false
+	}
+
+	// Step 2: encode the keyStart into bytes
+	keyStart := encodeKey(tdef.Prefix, rRec.ValStarts[:tdef.PKeys])
+	keyEnd := encodeKey(tdef.Prefix, rRec.ValEnds[:tdef.PKeys])
+
+	// Step 3: query from kv store
+	vals, found := db.kv.GetRange(keyStart, keyEnd)
+	if !found {
+		return allRecords, false
+	}
+
+	// Step 4: decode into record
+	for _, v := range vals {
+		val := decodeVals(v)
+		allRecords = append(allRecords, Record{
+			Cols: rRec.Cols,
+			Vals: val,
+		})
+	}
+
+	// Res: rec{Cols[name, age, date], Val: ["Adam", 30, 20250101]}
+	return allRecords, true
 }
 
 // INSERT INTO People (name, age, date) ('bob', 31, 20252111)
@@ -209,6 +321,8 @@ func getTableDef(db *DB, table string) *TableDef {
 	return &res
 }
 
+// rec = {['name', 'age'], ['Adam', 30] }
+// => SELCT * FROM ... WHERE name = 'Adam' and age = 30
 func (db *DB) Get(table string, rec *Record) bool {
 	// Step 1: Check and get table definition from table name
 	tdef := getTableDef(db, table)
@@ -218,6 +332,20 @@ func (db *DB) Get(table string, rec *Record) bool {
 
 	// Step 2: Get using table definition
 	return dbGet(db, tdef, rec)
+}
+
+// rec = {['age'], [(10, 30)] }
+// => SELCT * FROM ... WHERE age >= 30 and age <= 60
+func (db *DB) RangeQuery(table string, rec *RangeRecord) ([]Record, bool) {
+	var allRecords = make([]Record, 0)
+	// Step 1: Check and get table definition from table name
+	tdef := getTableDef(db, table)
+	if tdef == nil {
+		return allRecords, false
+	}
+
+	// Step 2: Get using table definition
+	return dbRangeGet(db, tdef, rec)
 }
 
 func (db *DB) Insert(table string, rec Record) bool {
@@ -238,10 +366,14 @@ func (db *DB) Insert(table string, rec Record) bool {
 }
 
 // =================== TODO: Implement this =================
-func (db *DB) Update(table string, rec Record) bool
+func (db *DB) Update(table string, rec Record) bool {
+	return true
+}
 
 // =================== TODO: Implement this =================
-func (db *DB) Upsert(table string, rec Record) bool
+func (db *DB) Upsert(table string, rec Record) bool {
+	return true
+}
 
 func (db *DB) Delete(table string, rec Record) bool {
 	// Step 1: Check and get table definition from table name

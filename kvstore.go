@@ -23,6 +23,34 @@ func (kv *KV) Get(key []byte) ([]byte, bool) {
 	return valueBytes, true
 }
 
+func (kv *KV) GetRange(keyStart []byte, keyEnd []byte) ([][]byte, bool) {
+	res := make([][]byte, 0)
+	iter := kv.tree.SeekGE(keyStart)
+	if iter == nil {
+		return res, false
+	}
+	for {
+		kv := iter.Deref()
+		// Compare 2 keys
+		var bigger = false
+		for i := range len(kv.key) {
+			if kv.key[i] > keyEnd[i] {
+				bigger = true
+				break
+			}
+		}
+		if bigger {
+			break
+		}
+		var valueBytes []byte = make([]byte, len(res))
+		for i := 0; i < int(kv.vallen); i++ {
+			valueBytes[i] = kv.val[i+(MAX_VAL_SIZE-int(kv.vallen))]
+		}
+		res = append(res, valueBytes)
+	}
+	return res, true
+}
+
 func (kv *KV) Set(key []byte, val []byte) {
 	kv.tree.Set(key, val)
 }
