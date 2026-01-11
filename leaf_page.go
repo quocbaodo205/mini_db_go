@@ -91,7 +91,6 @@ func (k *KeyVal) read_from_buffer(buffer *bytes.Buffer) {
 }
 
 func (k *KeyVal) compare(rhs *KeyVal) int {
-	res := 0
 	for i := 0; i < MAX_KEY_SIZE; i += 1 {
 		if k.key[i] < rhs.key[i] {
 			return -1
@@ -100,12 +99,11 @@ func (k *KeyVal) compare(rhs *KeyVal) int {
 			return 1
 		}
 	}
-	return res
+	return 0
 }
 
 // =========================================================================
 
-// Define leaf node
 type BTreeLeafPage struct {
 	header PageHeader
 	nkv    uint16

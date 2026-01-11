@@ -58,14 +58,12 @@ func (i *BIter) Next() {
 	pd := i.path[len(i.path)-1]
 	lastNode := pd.node
 
-	// fmt.Printf("Search pd = %v %v, path len = %v\n", pd.node, pd.position, len(i.path))
-
+	// Load + add until leaf
 	buffer := new(bytes.Buffer) // Buffer size = 0
 	for {
 		if convert, ok := lastNode.(*BTreeInternalPage); ok {
 			buffer.Reset()
 			child := convert.children[pd.position]
-			// fmt.Println("Need to read at child pos = ", pd.position, ", childPtr = ", child)
 			i.tree.readBlockAtPointer(child, buffer, i.file)
 			// Load child
 			header := PageHeader{}

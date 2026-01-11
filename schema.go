@@ -13,6 +13,7 @@ import (
 // column -> value
 
 const (
+	TYPE_EMPTY = 0
 	TYPE_BYTES = 1 // string type
 	TYPE_INT64 = 2 // int type
 )
@@ -25,19 +26,33 @@ type Value struct {
 	Str  []byte
 }
 
+// Have to assume the same type
+func compareValue(lhs Value, rhs Value) int {
+	if lhs.Type == TYPE_INT64 {
+		if lhs.I64 < rhs.I64 {
+			return -1
+		}
+		if lhs.I64 > rhs.I64 {
+			return 1
+		}
+	} else {
+		for i := 0; i < len(lhs.Str); i++ {
+			if lhs.Str[i] < rhs.Str[i] {
+				return -1
+			}
+			if lhs.Str[i] > rhs.Str[i] {
+				return 1
+			}
+		}
+	}
+	return 0
+}
+
 // Basically a row
 // Cols[1] = 'date' -> Vals[1]
 type Record struct {
 	Cols []string
 	Vals []Value
-}
-
-// Basically a row
-// Cols[1] = 'date' -> Vals[1]
-type RangeRecord struct {
-	Cols      []string
-	ValStarts []Value
-	ValEnds   []Value
 }
 
 // Add data to a record
@@ -59,15 +74,24 @@ func (r *Record) AddInt64(col string, val int64) *Record {
 	return r
 }
 
+// Asume the 2 slice have the same number of elements
+func compareRecord(lhs []Value, rhs []Value) int {
+	for i := range lhs {
+		comp := compareValue(lhs[i], rhs[i])
+		if comp != 0 {
+			return comp
+		}
+	}
+	return 0
+}
+
 // Table metadata: definition: Each column is of what type
-// Also tell which columns is primary key
-// [(name, age), date, friend_with,...]
 type TableDef struct {
-	name   string
-	Types  []uint8
-	Cols   []string
-	PKeys  uint8 // PKeys = 2: first 2 columns is the primary key
-	Prefix uint8
+	name    string
+	Types   []uint8
+	Cols    []string
+	Indexes [][]string // first in dex is the primary key
+	Prefix  []uint8    // auto-assigned prefixes
 }
 
 // Database schema: Internal tables
@@ -75,11 +99,11 @@ type TableDef struct {
 // Date_create: 2025/01/01
 // Store a bunch of key values
 var TDEF_META = &TableDef{
-	name:   "@meta",
-	Types:  []uint8{TYPE_BYTES, TYPE_BYTES},
-	Cols:   []string{"key", "value"},
-	PKeys:  2,
-	Prefix: 1,
+	name:    "@meta",
+	Types:   []uint8{TYPE_BYTES, TYPE_BYTES},
+	Cols:    []string{"key", "value"},
+	Indexes: [][]string{[]string{"key", "value"}},
+	Prefix:  []uint8{1},
 }
 
 // How many tables? What are the table
@@ -89,19 +113,17 @@ var TDEF_META = &TableDef{
 // ...
 // Store schema inside the KV
 var TDEF_TABLE = &TableDef{
-	name:   "@table",
-	Types:  []uint8{TYPE_BYTES, TYPE_BYTES},
-	Cols:   []string{"name", "def"},
-	PKeys:  2,
-	Prefix: 2,
+	name:    "@table",
+	Types:   []uint8{TYPE_BYTES, TYPE_BYTES},
+	Cols:    []string{"name", "def"},
+	Indexes: [][]string{{"name", "def"}},
+	Prefix:  []uint8{2},
 }
 
 type DB struct {
 	Path string
 	kv   KV
 }
-
-// ======================= Table functions ======================
 
 // ======================= Record functions =====================
 
@@ -111,25 +133,20 @@ type DB struct {
 // rec{Cols[name, date, age], Val: ['Adam', nil, 30]}
 // -> rec{Cols[name, age, date], Val: ['Adam', 30, nil]}
 func checkRecord(tdef *TableDef, rec *Record) bool {
-	// TODO: Reorder and check here
-	if 1 == 1 {
-		return false
-	}
-	return true
-}
-
-// Check if all primary key presents and have all known columns
-// rec{Cols[name, date, age], Val: ['Adam', nil, 30]}
-// -> rec{Cols[name, age, date], Val: ['Adam', 30, nil]}
-func checkRangeRecord(tdef *TableDef, rec *RangeRecord) bool {
-	// TODO: Reorder and check here
-	if 1 == 1 {
-		return false
+	// Check if rec have all the primary key columns
+	for i := 0; i < len(rec.Cols); i++ {
+		for _, idxCol := range tdef.Indexes[0] {
+			if idxCol == rec.Cols[i] && rec.Vals[i].Type == 0 {
+				// Found a primary key columns that have no value.
+				return false
+			}
+		}
 	}
 	return true
 }
 
 // 10, ["Adam", 30] -> [10 4 A d a m 8 0 0 0 0 0 0 0 30 0]
+// Contain all values in order.
 func encodeKey(prefix uint8, Vals []Value) []byte {
 	// Prepare a buffer for bytes writing
 	var err error
@@ -195,7 +212,23 @@ func decodeVals(data []byte) []Value {
 	return res
 }
 
+func makeValuesWithIndex(tdef *TableDef, indexPos int, rec *Record) []Value {
+	// Get record value
+	recordVals := make([]Value, 0)
+	for i := 0; i < len(tdef.Indexes[indexPos]); i++ {
+		for j := 0; j < len(rec.Cols); j++ {
+			if tdef.Indexes[indexPos][i] == rec.Cols[j] {
+				recordVals = append(recordVals, rec.Vals[j])
+			}
+		}
+	}
+	return recordVals
+}
+
+// ======================= Internal DB functions ======================
+
 // SELECT * FROM People WHERE name == 'Adam' and age == 30
+// Always get from primary key: index[0] , prefix[0]
 func dbGet(db *DB, tdef *TableDef, rec *Record) bool {
 	// Step 1: reorder columns
 	// rec{Cols[name, date, age], Val: ['Adam', nil, 30]}
@@ -205,8 +238,11 @@ func dbGet(db *DB, tdef *TableDef, rec *Record) bool {
 		return false
 	}
 
+	// Get record value
+	recordVals := makeValuesWithIndex(tdef, 0, rec)
+
 	// Step 2: encode the key into bytes
-	key := encodeKey(tdef.Prefix, rec.Vals[:tdef.PKeys])
+	key := encodeKey(tdef.Prefix[0], recordVals)
 
 	// Step 3: query from kv store
 	val, found := db.kv.Get(key)
@@ -216,47 +252,12 @@ func dbGet(db *DB, tdef *TableDef, rec *Record) bool {
 
 	// Step 4: decode into record
 	vals := decodeVals(val)
-	for i := tdef.PKeys; i < uint8(len(tdef.Cols)); i++ {
-		rec.Vals[i] = vals[i-tdef.PKeys]
+	for i := len(tdef.Indexes[0]); i < len(tdef.Cols); i++ {
+		rec.Vals[i] = vals[i-len(tdef.Indexes[0])]
 	}
 
 	// Res: rec{Cols[name, age, date], Val: ["Adam", 30, 20250101]}
 	return true
-}
-
-// SELECT * FROM People WHERE age >= 10 and age <= 30
-// -> Find: key = [.... (decode age = 10)] -> iter next
-func dbRangeGet(db *DB, tdef *TableDef, rRec *RangeRecord) ([]Record, bool) {
-	var allRecords = make([]Record, 0)
-	// Step 1: reorder columns
-	// rec{Cols[name, date, age], Val: ['Adam', nil, 30]}
-	// -> rec{Cols[name, age, date], Val: ['Adam', 30, nil]}
-	checkRecordRes := checkRangeRecord(tdef, rRec)
-	if !checkRecordRes {
-		return allRecords, false
-	}
-
-	// Step 2: encode the keyStart into bytes
-	keyStart := encodeKey(tdef.Prefix, rRec.ValStarts[:tdef.PKeys])
-	keyEnd := encodeKey(tdef.Prefix, rRec.ValEnds[:tdef.PKeys])
-
-	// Step 3: query from kv store
-	vals, found := db.kv.GetRange(keyStart, keyEnd)
-	if !found {
-		return allRecords, false
-	}
-
-	// Step 4: decode into record
-	for _, v := range vals {
-		val := decodeVals(v)
-		allRecords = append(allRecords, Record{
-			Cols: rRec.Cols,
-			Vals: val,
-		})
-	}
-
-	// Res: rec{Cols[name, age, date], Val: ["Adam", 30, 20250101]}
-	return allRecords, true
 }
 
 // INSERT INTO People (name, age, date) ('bob', 31, 20252111)
@@ -269,13 +270,22 @@ func dbInsert(db *DB, tdef *TableDef, rec *Record) bool {
 		return false
 	}
 
+	// Get record value
+	recordVals := make([]Value, 0)
+	for i := 0; i < len(tdef.Indexes[0]); i++ {
+		for j := 0; j < len(rec.Cols); j++ {
+			if tdef.Indexes[0][i] == rec.Cols[j] {
+				recordVals = append(recordVals, rec.Vals[j])
+			}
+		}
+	}
 	// Step 2: encode the key into bytes
-	key := encodeKey(tdef.Prefix, rec.Vals[:tdef.PKeys])
+	key := encodeKey(tdef.Prefix[0], recordVals)
 
 	// TODO: Step 3: Fill empty for columns not in rec
 
 	// Step 4: encode value
-	val := encodeKey(tdef.Prefix, rec.Vals[tdef.PKeys:])
+	val := encodeKey(tdef.Prefix[0], rec.Vals[len(tdef.Indexes[0]):])
 
 	db.kv.Set(key, val)
 	return true
@@ -291,11 +301,52 @@ func dbDelete(db *DB, tdef *TableDef, rec *Record) bool {
 		return false
 	}
 
+	// Get record value
+	recordVals := make([]Value, 0)
+	for i := 0; i < len(tdef.Indexes[0]); i++ {
+		for j := 0; j < len(rec.Cols); j++ {
+			if tdef.Indexes[0][i] == rec.Cols[j] {
+				recordVals = append(recordVals, rec.Vals[j])
+			}
+		}
+	}
 	// Step 2: encode the key into bytes
-	key := encodeKey(tdef.Prefix, rec.Vals[:tdef.PKeys])
+	key := encodeKey(tdef.Prefix[0], recordVals)
 
 	// Step 3: Delete using KV store
 	return db.kv.Del(key)
+}
+
+func dbUpdate(db *DB, tdef *TableDef, rec *Record) bool {
+	// Step 1: reorder columns
+	// rec{Cols[name, date, age], Val: ['Adam', nil, 30]}
+	// -> rec{Cols[name, age, date], Val: ['Adam', 30, nil]}
+	checkRecordRes := checkRecord(tdef, rec)
+	if !checkRecordRes {
+		return false
+	}
+
+	// Get record value
+	recordVals := make([]Value, 0)
+	for i := 0; i < len(tdef.Indexes[0]); i++ {
+		for j := 0; j < len(rec.Cols); j++ {
+			if tdef.Indexes[0][i] == rec.Cols[j] {
+				recordVals = append(recordVals, rec.Vals[j])
+			}
+		}
+	}
+	// Step 2: encode the key into bytes
+	key := encodeKey(tdef.Prefix[0], recordVals)
+
+	// Step 3: encode value
+	val := encodeKey(tdef.Prefix[0], rec.Vals[len(tdef.Indexes[0]):])
+
+	db.kv.Set(key, val)
+	// Step 4: maintain index with update request
+	req := UpdateReq{Key: key, Val: val, Mode: 1} // Mode update
+	// maintain secondary indexes
+	handleUpdateRequest(db, tdef, &req)
+	return req.Updated
 }
 
 // Convert from record to a table definition structure
@@ -321,6 +372,8 @@ func getTableDef(db *DB, table string) *TableDef {
 	return &res
 }
 
+// ========================== DB Wrapper functions ==============
+
 // rec = {['name', 'age'], ['Adam', 30] }
 // => SELCT * FROM ... WHERE name = 'Adam' and age = 30
 func (db *DB) Get(table string, rec *Record) bool {
@@ -332,20 +385,6 @@ func (db *DB) Get(table string, rec *Record) bool {
 
 	// Step 2: Get using table definition
 	return dbGet(db, tdef, rec)
-}
-
-// rec = {['age'], [(10, 30)] }
-// => SELCT * FROM ... WHERE age >= 30 and age <= 60
-func (db *DB) RangeQuery(table string, rec *RangeRecord) ([]Record, bool) {
-	var allRecords = make([]Record, 0)
-	// Step 1: Check and get table definition from table name
-	tdef := getTableDef(db, table)
-	if tdef == nil {
-		return allRecords, false
-	}
-
-	// Step 2: Get using table definition
-	return dbRangeGet(db, tdef, rec)
 }
 
 func (db *DB) Insert(table string, rec Record) bool {
@@ -390,4 +429,142 @@ func (db *DB) Delete(table string, rec Record) bool {
 
 	// Step 3: Delete using table definition
 	return dbDelete(db, tdef, &rec)
+}
+
+// Return all records
+// SELECT * FROM People where c3 <= 2 AND c2 <= 1
+// AND c3 >=1 AND c2 >= 2
+func (db *DB) Scan(table string, sc *Scanner) []Record {
+	records := make([]Record, 0)
+	// Step 1: Check and get table definition from table name
+	tdef := getTableDef(db, table)
+	if tdef == nil {
+		return records
+	}
+	sc.tdef = tdef
+	// TODO Init the Scanner here
+	for {
+		// Assume init
+		if !sc.Valid() {
+			break
+		}
+		rec := Record{}
+		sc.Deref(&rec)
+		records = append(records, rec)
+		sc.Next()
+	}
+	return records
+}
+
+// ========================== Maintaining indexes ==================
+type UpdateReq struct {
+	tree *BPTreeDisk
+	// in
+	Key  []byte
+	Val  []byte
+	Old  []byte // the value before the update
+	Mode int
+	// out
+	Added   bool // added a new key
+	Updated bool // added a new key or an old key was changed
+}
+
+func handleUpdateRequest(db *DB, tdef *TableDef, req *UpdateReq) {
+	oldVals := decodeVals(req.Old)
+	newVals := decodeVals(req.Val)
+	needChangeIdx := 0
+	var needChangePrefix uint8 = 0
+	for i := len(tdef.Indexes[0]); i < len(tdef.Cols); i++ {
+		col := tdef.Cols[i]
+		if compareRecord(oldVals, newVals) != 0 {
+			// Check if this belong to any index
+			for idx, idxCols := range tdef.Indexes[1:] {
+				for _, idxCol := range idxCols {
+					if idxCol == col {
+						needChangeIdx = idx
+						needChangePrefix = tdef.Prefix[idx]
+					}
+				}
+			}
+		}
+	}
+	oldRecord := Record{}
+	newRecord := Record{}
+	// Get record value
+	oldRecordVals := make([]Value, 0)
+	newRecordVals := make([]Value, 0)
+	for i := 0; i < len(tdef.Indexes[needChangeIdx]); i++ {
+		for j := 0; j < len(oldRecord.Cols); j++ {
+			if tdef.Indexes[needChangeIdx][i] == oldRecord.Cols[j] {
+				oldRecordVals = append(oldRecordVals, oldRecord.Vals[j])
+				newRecordVals = append(newRecordVals, newRecord.Vals[j])
+			}
+		}
+	}
+	oldKey := encodeKey(uint8(needChangePrefix), oldRecordVals)
+	newKey := encodeKey(uint8(needChangePrefix), newRecordVals)
+	db.kv.Del(oldKey)
+	db.kv.Set(newKey, req.Key)
+	req.Updated = true
+}
+
+// ========================== Scanner ==============================
+type Scanner struct {
+	// the range, from Key1 to Key2
+	Key1 Record
+	Key2 Record
+	// internal
+	db     *DB
+	tdef   *TableDef
+	index  int    // which index?
+	iter   *BIter // the underlying B-tree iterator
+	keyEnd []byte // the encoded Key2
+}
+
+// within the range or not?
+func (sc *Scanner) Valid() bool {
+	if len(sc.keyEnd) == 0 {
+		// Get record value
+		recordVals := make([]Value, 0)
+		for i := 0; i < len(sc.tdef.Indexes[sc.index]); i++ {
+			for j := 0; j < len(sc.Key2.Cols); j++ {
+				if sc.tdef.Indexes[sc.index][i] == sc.Key2.Cols[j] {
+					recordVals = append(recordVals, sc.Key2.Vals[j])
+				}
+			}
+		}
+		sc.keyEnd = encodeKey(sc.tdef.Prefix[sc.index], recordVals)
+	}
+	pkeyKV := sc.iter.Deref()
+	indexKeys := pkeyKV.key
+	for i := range len(indexKeys) {
+		if indexKeys[i] > sc.keyEnd[i] {
+			// Out of range
+			return false
+		}
+	}
+	return true
+}
+
+// move the underlying B-tree iterator
+func (sc *Scanner) Next() {
+	// Assume init
+	sc.iter.Next()
+}
+
+// fetch the current row
+func (sc *Scanner) Deref(rec *Record) {
+	pkeyKV := sc.iter.Deref()
+	pkeyData := pkeyKV.val
+	pkeyVal, _ := sc.db.kv.Get(pkeyData[:])
+
+	// Decode primary keys to columns.
+	pkeyVals := decodeVals(pkeyData[:])
+	recordVals := decodeVals(pkeyVal)
+	for i := 0; i < len(sc.tdef.Indexes[0]); i++ {
+		rec.Vals[i] = pkeyVals[i]
+	}
+	for i := len(sc.tdef.Indexes[0]); i < len(sc.tdef.Cols); i++ {
+		rec.Vals[i] = recordVals[i-len(sc.tdef.Indexes[0])]
+	}
 }

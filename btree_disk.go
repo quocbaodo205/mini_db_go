@@ -175,7 +175,6 @@ func (tree *BPTreeDisk) insertRecursive(node any, insertKey *KeyEntry, insertKV 
 		if isDebugMode {
 			fmt.Printf("Internal page = %v\n", *convert)
 		}
-		pos := convert.FindLastLE(insertKey) // -> -1
 		if convert.nkey == 0 {
 			// Insert in the begining
 			firstLeaf := NewLPage()
@@ -204,6 +203,7 @@ func (tree *BPTreeDisk) insertRecursive(node any, insertKey *KeyEntry, insertKV 
 				new_promo_key:  KeyEntry{},
 			}
 		} else {
+			pos := convert.FindLastLE(insertKey) // -> -1
 			// Special process for -1 position
 			if pos == -1 {
 				pos = 0
@@ -255,7 +255,6 @@ func (tree *BPTreeDisk) insertRecursive(node any, insertKey *KeyEntry, insertKV 
 				oldPtr := tree.fileAllocator.alloc()
 				newInternal := convert.Split()
 				newInternal.header.next_page_pointer = convert.header.next_page_pointer
-				newInternal.header.prev_page_pointer = oldPtr
 				if isDebugMode {
 					fmt.Printf("Need split, old = %v, new = %v\n", *convert, newInternal)
 				}
@@ -657,29 +656,6 @@ func (tree *BPTreeDisk) delRecursive(node any, delKey *KeyEntry, delKV *KeyVal, 
 		convert := node.(*BTreeLeafPage)
 		convert.DelKV(delKV)
 		if convert.nkv == 0 {
-			prevPtr := convert.header.prev_page_pointer
-			nextPtr := convert.header.next_page_pointer
-			// Allocate 2 new node on file
-			newPrevPtr := tree.fileAllocator.alloc()
-			newNextPtr := tree.fileAllocator.alloc()
-			// Load page at previous:
-			tree.readBlockAtPointer(prevPtr, buffer, file)
-			lpage := BTreeLeafPage{}
-			lpage.read_from_buffer(buffer, true)
-			lpage.header.next_page_pointer = newNextPtr
-			// Save new previous page
-			buffer.Reset()
-			lpage.write_to_buffer(buffer)
-			tree.writeBufferToFileAtPtr(buffer, file, newPrevPtr)
-			// Load page at next:
-			tree.readBlockAtPointer(nextPtr, buffer, file)
-			lpage = BTreeLeafPage{}
-			lpage.read_from_buffer(buffer, true)
-			lpage.header.prev_page_pointer = newPrevPtr
-			// Save new previous page
-			buffer.Reset()
-			lpage.write_to_buffer(buffer)
-			tree.writeBufferToFileAtPtr(buffer, file, newNextPtr)
 			return DelResult{
 				node_ptr:       0,
 				node_promo_key: KeyEntry{},

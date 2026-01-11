@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"math/rand"
 	"testing"
 	"time"
@@ -21,10 +20,10 @@ func TestBTreeDisk(t *testing.T) {
 	test_db := NewBPTreeDisk("test_db.db")
 	// Insert test: insert 10 nodes from 1->10 to check if it's good.
 	for i := 1; i <= maxNum; i++ {
-		d := intToSlice(int64(i))
-		fmt.Printf("insert key = %v\n", d)
+		// d := intToSlice(int64(i))
+		// fmt.Printf("insert key = %v\n", d)
 		test_db.Insert(intToSlice(int64(i)), intToSlice(int64(i)))
-		fmt.Println("=========================================")
+		// fmt.Println("=========================================")
 	}
 	// Find test: Find these kv if they are the same.
 	for i := 1; i <= maxNum; i++ {
@@ -40,10 +39,10 @@ func TestBTreeDisk(t *testing.T) {
 	}
 	// Set test: Set to i + 5
 	for i := 1; i <= maxNum; i++ {
-		d := intToSlice(int64(i))
-		fmt.Printf("set key = %v\n", d)
+		// d := intToSlice(int64(i))
+		// fmt.Printf("set key = %v\n", d)
 		test_db.Set(intToSlice(int64(i)), intToSlice(int64(i+5)))
-		fmt.Println("=========================================")
+		// fmt.Println("=========================================")
 	}
 	// Find test: Find these kv if they are the same.
 	for i := 1; i <= maxNum; i++ {
@@ -77,10 +76,10 @@ func TestBTreeDisk(t *testing.T) {
 		if i%2 == 0 {
 			continue
 		}
-		d := intToSlice(int64(i))
-		fmt.Printf("del key = %v\n", d)
+		// d := intToSlice(int64(i))
+		// fmt.Printf("del key = %v\n", d)
 		test_db.Del(intToSlice(int64(i)))
-		fmt.Println("=========================================")
+		// fmt.Println("=========================================")
 	}
 	// Find test: Find these kv if they are the same.
 	for i := 1; i <= maxNum; i++ {
@@ -119,10 +118,10 @@ func TestBTreeDisk_Shuffle(t *testing.T) {
 	test_db := NewBPTreeDisk("test_db.db")
 	// Insert test: insert to check if it's good.
 	for _, i := range numbers {
-		d := intToSlice(int64(i))
-		fmt.Printf("insert key = %v\n", d)
+		// d := intToSlice(int64(i))
+		// fmt.Printf("insert key = %v\n", d)
 		test_db.Insert(intToSlice(int64(i)), intToSlice(int64(i)))
-		fmt.Println("=========================================")
+		// fmt.Println("=========================================")
 	}
 	// Find test: Find these kv if they are the same.
 	r.Shuffle(maxNum, func(i, j int) {
@@ -144,10 +143,10 @@ func TestBTreeDisk_Shuffle(t *testing.T) {
 		numbers[i], numbers[j] = numbers[j], numbers[i]
 	})
 	for _, i := range numbers {
-		d := intToSlice(int64(i))
-		fmt.Printf("set key = %v\n", d)
+		// d := intToSlice(int64(i))
+		// fmt.Printf("set key = %v\n", d)
 		test_db.Set(intToSlice(int64(i)), intToSlice(int64(i+5)))
-		fmt.Println("=========================================")
+		// fmt.Println("=========================================")
 	}
 	// Find test: Find these kv if they are the same.
 	r.Shuffle(maxNum, func(i, j int) {
@@ -172,10 +171,10 @@ func TestBTreeDisk_Shuffle(t *testing.T) {
 		if i%2 == 0 {
 			continue
 		}
-		d := intToSlice(int64(i))
-		fmt.Printf("del key = %v\n", d)
+		// d := intToSlice(int64(i))
+		// fmt.Printf("del key = %v\n", d)
 		test_db.Del(intToSlice(int64(i)))
-		fmt.Println("=========================================")
+		// fmt.Println("=========================================")
 	}
 	// Find test: Find these kv if they are the same.
 	r.Shuffle(maxNum, func(i, j int) {
