@@ -18,16 +18,17 @@ func TestBTreeDisk(t *testing.T) {
 	maxNum := 100
 	// Create a new BTreeDisk using a test file
 	test_db := NewBPTreeDisk("test_db.db")
+	meta := test_db.LoadMetaPage()
 	// Insert test: insert 10 nodes from 1->10 to check if it's good.
 	for i := 1; i <= maxNum; i++ {
 		// d := intToSlice(int64(i))
 		// fmt.Printf("insert key = %v\n", d)
-		test_db.Insert(intToSlice(int64(i)), intToSlice(int64(i)))
+		meta = test_db.Insert(meta, intToSlice(int64(i)), intToSlice(int64(i)))
 		// fmt.Println("=========================================")
 	}
 	// Find test: Find these kv if they are the same.
 	for i := 1; i <= maxNum; i++ {
-		kv := test_db.Find(intToSlice(int64(i)))
+		kv := test_db.Find(meta, intToSlice(int64(i)))
 		expected := NewKeyValFromInt(int64(i), int64(i))
 		if kv == nil {
 			t.Errorf("Find test failed: Cannot find key = %d", i)
@@ -41,12 +42,12 @@ func TestBTreeDisk(t *testing.T) {
 	for i := 1; i <= maxNum; i++ {
 		// d := intToSlice(int64(i))
 		// fmt.Printf("set key = %v\n", d)
-		test_db.Set(intToSlice(int64(i)), intToSlice(int64(i+5)))
+		meta = test_db.Set(meta, intToSlice(int64(i)), intToSlice(int64(i+5)))
 		// fmt.Println("=========================================")
 	}
 	// Find test: Find these kv if they are the same.
 	for i := 1; i <= maxNum; i++ {
-		kv := test_db.Find(intToSlice(int64(i)))
+		kv := test_db.Find(meta, intToSlice(int64(i)))
 		expected := NewKeyValFromInt(int64(i), int64(i+5))
 		if kv == nil {
 			t.Errorf("Find test failed: Cannot find key = %d", i)
@@ -59,7 +60,7 @@ func TestBTreeDisk(t *testing.T) {
 	// Iter test: Get an iterator and next 10 times. Should have the correct kv
 	for i := 1; i <= maxNum-10; i++ {
 		// kv := test_db.Find(intToSlice(int64(i)))
-		iter := test_db.SeekGE(intToSlice(int64(i)))
+		iter := test_db.SeekGE(meta, intToSlice(int64(i)))
 		for j := range 10 {
 			kv := iter.Deref()
 			expected := NewKeyValFromInt(int64(i+j), int64(i+j+5))
@@ -78,12 +79,12 @@ func TestBTreeDisk(t *testing.T) {
 		}
 		// d := intToSlice(int64(i))
 		// fmt.Printf("del key = %v\n", d)
-		test_db.Del(intToSlice(int64(i)))
+		_, meta = test_db.Del(meta, intToSlice(int64(i)))
 		// fmt.Println("=========================================")
 	}
 	// Find test: Find these kv if they are the same.
 	for i := 1; i <= maxNum; i++ {
-		kv := test_db.Find(intToSlice(int64(i)))
+		kv := test_db.Find(meta, intToSlice(int64(i)))
 		if i%2 == 0 {
 			expected := NewKeyValFromInt(int64(i), int64(i+5))
 			if kv == nil {
@@ -116,11 +117,12 @@ func TestBTreeDisk_Shuffle(t *testing.T) {
 	})
 	// Create a new BTreeDisk using a test file
 	test_db := NewBPTreeDisk("test_db.db")
+	meta := test_db.LoadMetaPage()
 	// Insert test: insert to check if it's good.
 	for _, i := range numbers {
 		// d := intToSlice(int64(i))
 		// fmt.Printf("insert key = %v\n", d)
-		test_db.Insert(intToSlice(int64(i)), intToSlice(int64(i)))
+		meta = test_db.Insert(meta, intToSlice(int64(i)), intToSlice(int64(i)))
 		// fmt.Println("=========================================")
 	}
 	// Find test: Find these kv if they are the same.
@@ -128,7 +130,7 @@ func TestBTreeDisk_Shuffle(t *testing.T) {
 		numbers[i], numbers[j] = numbers[j], numbers[i]
 	})
 	for _, i := range numbers {
-		kv := test_db.Find(intToSlice(int64(i)))
+		kv := test_db.Find(meta, intToSlice(int64(i)))
 		expected := NewKeyValFromInt(int64(i), int64(i))
 		if kv == nil {
 			t.Errorf("Find test failed: Cannot find key = %d", i)
@@ -145,7 +147,7 @@ func TestBTreeDisk_Shuffle(t *testing.T) {
 	for _, i := range numbers {
 		// d := intToSlice(int64(i))
 		// fmt.Printf("set key = %v\n", d)
-		test_db.Set(intToSlice(int64(i)), intToSlice(int64(i+5)))
+		meta = test_db.Set(meta, intToSlice(int64(i)), intToSlice(int64(i+5)))
 		// fmt.Println("=========================================")
 	}
 	// Find test: Find these kv if they are the same.
@@ -153,7 +155,7 @@ func TestBTreeDisk_Shuffle(t *testing.T) {
 		numbers[i], numbers[j] = numbers[j], numbers[i]
 	})
 	for _, i := range numbers {
-		kv := test_db.Find(intToSlice(int64(i)))
+		kv := test_db.Find(meta, intToSlice(int64(i)))
 		expected := NewKeyValFromInt(int64(i), int64(i+5))
 		if kv == nil {
 			t.Errorf("Find test failed: Cannot find key = %d", i)
@@ -173,7 +175,7 @@ func TestBTreeDisk_Shuffle(t *testing.T) {
 		}
 		// d := intToSlice(int64(i))
 		// fmt.Printf("del key = %v\n", d)
-		test_db.Del(intToSlice(int64(i)))
+		_, meta = test_db.Del(meta, intToSlice(int64(i)))
 		// fmt.Println("=========================================")
 	}
 	// Find test: Find these kv if they are the same.
@@ -181,7 +183,7 @@ func TestBTreeDisk_Shuffle(t *testing.T) {
 		numbers[i], numbers[j] = numbers[j], numbers[i]
 	})
 	for _, i := range numbers {
-		kv := test_db.Find(intToSlice(int64(i)))
+		kv := test_db.Find(meta, intToSlice(int64(i)))
 		if i%2 == 0 {
 			expected := NewKeyValFromInt(int64(i), int64(i+5))
 			if kv == nil {

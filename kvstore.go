@@ -3,6 +3,7 @@ package main
 type KV struct {
 	fileName string
 	tree     BPTreeDisk
+	history  []CommittedTX
 }
 
 func (kv *KV) Open() {
@@ -10,8 +11,16 @@ func (kv *KV) Open() {
 	kv.tree = NewBPTreeDisk(kv.fileName)
 }
 
-func (kv *KV) Get(key []byte) ([]byte, bool) {
-	res := kv.tree.Find(key)
+func (kv *KV) LoadMetaPage() MetaPage {
+	return kv.tree.LoadMetaPage()
+}
+
+func (kv *KV) WriteMetaPage(metaPage MetaPage) {
+	kv.tree.WriteMetaPage(metaPage)
+}
+
+func (kv *KV) Get(metaPage MetaPage, key []byte) ([]byte, bool) {
+	res := kv.tree.Find(metaPage, key)
 	if res == nil {
 		var valueBytes []byte = make([]byte, 0)
 		return valueBytes, false
@@ -23,9 +32,9 @@ func (kv *KV) Get(key []byte) ([]byte, bool) {
 	return valueBytes, true
 }
 
-func (kv *KV) GetRange(keyStart []byte, keyEnd []byte) ([][]byte, bool) {
+func (kv *KV) GetRange(metaPage MetaPage, keyStart []byte, keyEnd []byte) ([][]byte, bool) {
 	res := make([][]byte, 0)
-	iter := kv.tree.SeekGE(keyStart)
+	iter := kv.tree.SeekGE(metaPage, keyStart)
 	if iter == nil {
 		return res, false
 	}
@@ -51,10 +60,20 @@ func (kv *KV) GetRange(keyStart []byte, keyEnd []byte) ([][]byte, bool) {
 	return res, true
 }
 
-func (kv *KV) Set(key []byte, val []byte) {
-	kv.tree.Set(key, val)
+func (kv *KV) Set(metaPage MetaPage, key []byte, val []byte) MetaPage {
+	return kv.tree.Set(metaPage, key, val)
 }
 
-func (kv *KV) Del(key []byte) bool {
-	return kv.tree.Del(key)
+func (kv *KV) Del(metaPage MetaPage, key []byte) (bool, MetaPage) {
+	return kv.tree.Del(metaPage, key)
+}
+
+func (kv *KV) CommitToDisk() {
+	// TODO: Rollback with snapshot in the beginning of the transaction
+	for {
+		committedTx := kv.history[0]
+		// Need to commit
+		kv.WriteMetaPage(committedTx.mt)
+		kv.history = kv.history[1:]
+	}
 }

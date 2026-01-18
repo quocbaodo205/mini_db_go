@@ -334,7 +334,7 @@ func (tree *BPTreeDisk) insertRecursive(node any, insertKey *KeyEntry, insertKV 
 	}
 }
 
-func (tree *BPTreeDisk) Insert(insertKeyBytes []byte, insertValueBytes []byte) {
+func (tree *BPTreeDisk) Insert(metaPage MetaPage, insertKeyBytes []byte, insertValueBytes []byte) MetaPage {
 	buffer := new(bytes.Buffer) // Buffer size = 0
 	insertKey := NewKeyEntryFromBytes(insertKeyBytes)
 	insertKV := NewKeyValFromBytes(insertKeyBytes, insertValueBytes)
@@ -345,9 +345,9 @@ func (tree *BPTreeDisk) Insert(insertKeyBytes []byte, insertValueBytes []byte) {
 	}
 	defer file.Close() // Persist
 	// Step 2: Read MetaPage
-	tree.readBlockAtPointer(0, buffer, file) // Buffer size = BLOCK_SIZE
-	metaPage := MetaPage{}
-	metaPage.read_from_buffer(buffer) // buffer size decrease
+	// tree.readBlockAtPointer(0, buffer, file) // Buffer size = BLOCK_SIZE
+	// metaPage := MetaPage{}
+	// metaPage.read_from_buffer(buffer) // buffer size decrease
 	// fmt.Printf("Meta page: %v\n", metaPage)
 	internalPage := NewIPage()
 	// Step 2': Read first internal page
@@ -382,16 +382,18 @@ func (tree *BPTreeDisk) Insert(insertKeyBytes []byte, insertValueBytes []byte) {
 		deletedPtr = append(deletedPtr, metaPage.header.next_page_pointer)
 	}
 	metaPage.header.next_page_pointer = first_internal_page_ptr
-	buffer.Reset()
-	metaPage.write_to_buffer(buffer)
-	tree.writeBufferToFileFirst(buffer, file)
+	// buffer.Reset()
+	// Write to buffer here
+	// metaPage.write_to_buffer(buffer)
+	// tree.writeBufferToFileFirst(buffer, file)
 	// Defragment
-	for _, x := range deletedPtr {
-		tree.fileAllocator.free(x)
-	}
+	// for _, x := range deletedPtr {
+	// 	tree.fileAllocator.free(x)
+	// }
+	return metaPage
 }
 
-func (tree *BPTreeDisk) Find(key []byte) *KeyVal {
+func (tree *BPTreeDisk) Find(metaPage MetaPage, key []byte) *KeyVal {
 	buffer := new(bytes.Buffer) // Buffer size = 0
 	findKeyE := NewKeyEntryFromBytes(key)
 	var emptyVal []byte = make([]byte, 0)
@@ -402,10 +404,10 @@ func (tree *BPTreeDisk) Find(key []byte) *KeyVal {
 		panic(err)
 	}
 	defer file.Close() // Persist
-	// Step 2: Read MetaPage
-	tree.readBlockAtPointer(0, buffer, file) // Buffer size = BLOCK_SIZE
-	metaPage := MetaPage{}
-	metaPage.read_from_buffer(buffer) // buffer size decrease
+	// // Step 2: Read MetaPage
+	// tree.readBlockAtPointer(0, buffer, file) // Buffer size = BLOCK_SIZE
+	// metaPage := MetaPage{}
+	// metaPage.read_from_buffer(buffer) // buffer size decrease
 
 	internalPage := BTreeInternalPage{}
 	// Step 2': Read first internal page
@@ -541,14 +543,13 @@ func (tree *BPTreeDisk) setRecursive(node any, setKey *KeyEntry, setKV *KeyVal, 
 	}
 }
 
-func (tree *BPTreeDisk) Set(setKeyBytes []byte, setValueBytes []byte) {
-	findRes := tree.Find(setKeyBytes)
+func (tree *BPTreeDisk) Set(metaPage MetaPage, setKeyBytes []byte, setValueBytes []byte) MetaPage {
+	findRes := tree.Find(metaPage, setKeyBytes)
 	if findRes == nil {
 		if isDebugMode {
 			fmt.Printf("key %v not found, inserting...\n", setKeyBytes)
 		}
-		tree.Insert(setKeyBytes, setValueBytes)
-		return
+		return tree.Insert(metaPage, setKeyBytes, setValueBytes)
 	}
 
 	buffer := new(bytes.Buffer) // Buffer size = 0
@@ -564,9 +565,9 @@ func (tree *BPTreeDisk) Set(setKeyBytes []byte, setValueBytes []byte) {
 	}
 	defer file.Close() // Persist
 	// Step 2: Read MetaPage
-	tree.readBlockAtPointer(0, buffer, file) // Buffer size = BLOCK_SIZE
-	metaPage := MetaPage{}
-	metaPage.read_from_buffer(buffer) // buffer size decrease
+	// tree.readBlockAtPointer(0, buffer, file) // Buffer size = BLOCK_SIZE
+	// metaPage := MetaPage{}
+	// metaPage.read_from_buffer(buffer) // buffer size decrease
 
 	internalPage := NewIPage()
 	// Step 2': Read first internal page
@@ -591,13 +592,14 @@ func (tree *BPTreeDisk) Set(setKeyBytes []byte, setValueBytes []byte) {
 		deletedPtr = append(deletedPtr, metaPage.header.next_page_pointer)
 	}
 	metaPage.header.next_page_pointer = first_internal_page_ptr
-	buffer.Reset()
-	metaPage.write_to_buffer(buffer)
-	tree.writeBufferToFileFirst(buffer, file)
-	// Defragment
-	for _, x := range deletedPtr {
-		tree.fileAllocator.free(x)
-	}
+	// buffer.Reset()
+	// metaPage.write_to_buffer(buffer)
+	// tree.writeBufferToFileFirst(buffer, file)
+	// // Defragment
+	// for _, x := range deletedPtr {
+	// 	tree.fileAllocator.free(x)
+	// }
+	return metaPage
 }
 
 // Assume value always have
@@ -673,10 +675,10 @@ func (tree *BPTreeDisk) delRecursive(node any, delKey *KeyEntry, delKV *KeyVal, 
 	}
 }
 
-func (tree *BPTreeDisk) Del(key []byte) bool {
-	findRes := tree.Find(key)
+func (tree *BPTreeDisk) Del(metaPage MetaPage, key []byte) (bool, MetaPage) {
+	findRes := tree.Find(metaPage, key)
 	if findRes == nil {
-		return false
+		return false, MetaPage{}
 	}
 
 	buffer := new(bytes.Buffer) // Buffer size = 0
@@ -691,9 +693,9 @@ func (tree *BPTreeDisk) Del(key []byte) bool {
 	}
 	defer file.Close() // Persist
 	// Step 2: Read MetaPage
-	tree.readBlockAtPointer(0, buffer, file) // Buffer size = BLOCK_SIZE
-	metaPage := MetaPage{}
-	metaPage.read_from_buffer(buffer) // buffer size decrease
+	// tree.readBlockAtPointer(0, buffer, file) // Buffer size = BLOCK_SIZE
+	// metaPage := MetaPage{}
+	// metaPage.read_from_buffer(buffer) // buffer size decrease
 
 	internalPage := NewIPage()
 	// Step 2': Read first internal page
@@ -712,18 +714,18 @@ func (tree *BPTreeDisk) Del(key []byte) bool {
 		deletedPtr = append(deletedPtr, metaPage.header.next_page_pointer)
 	}
 	metaPage.header.next_page_pointer = first_internal_page_ptr
-	buffer.Reset()
-	metaPage.write_to_buffer(buffer)
-	tree.writeBufferToFileFirst(buffer, file)
-	// Defragment
-	for _, x := range deletedPtr {
-		tree.fileAllocator.free(x)
-	}
-	return true
+	// buffer.Reset()
+	// metaPage.write_to_buffer(buffer)
+	// tree.writeBufferToFileFirst(buffer, file)
+	// // Defragment
+	// for _, x := range deletedPtr {
+	// 	tree.fileAllocator.free(x)
+	// }
+	return true, metaPage
 }
 
 // 10 <= x <= 50
-func (tree *BPTreeDisk) SeekGE(key []byte) *BIter {
+func (tree *BPTreeDisk) SeekGE(metaPage MetaPage, key []byte) *BIter {
 	buffer := new(bytes.Buffer) // Buffer size = 0
 	findKeyE := NewKeyEntryFromBytes(key)
 	var emptyVal []byte = make([]byte, 0)
@@ -735,9 +737,9 @@ func (tree *BPTreeDisk) SeekGE(key []byte) *BIter {
 	}
 	// defer file.Close() // Don't close the file, open for reading...
 	// Step 2: Read MetaPage
-	tree.readBlockAtPointer(0, buffer, file) // Buffer size = BLOCK_SIZE
-	metaPage := MetaPage{}
-	metaPage.read_from_buffer(buffer) // buffer size decrease
+	// tree.readBlockAtPointer(0, buffer, file) // Buffer size = BLOCK_SIZE
+	// metaPage := MetaPage{}
+	// metaPage.read_from_buffer(buffer) // buffer size decrease
 
 	internalPage := BTreeInternalPage{}
 	// Step 2': Read first internal page
@@ -811,4 +813,32 @@ func (tree *BPTreeDisk) SeekGE(key []byte) *BIter {
 			return &iter
 		}
 	}
+}
+
+func (tree *BPTreeDisk) LoadMetaPage() MetaPage {
+	buffer := new(bytes.Buffer) // Buffer size = 0
+	// Step 1: Open file
+	file, err := os.OpenFile(tree.fileName, os.O_RDWR, 0644)
+	if err != nil {
+		panic(err)
+	}
+	defer file.Close() // Persist
+	// Step 2: Read MetaPage
+	tree.readBlockAtPointer(0, buffer, file) // Buffer size = BLOCK_SIZE
+	metaPage := MetaPage{}
+	metaPage.read_from_buffer(buffer) // buffer size decrease
+	return metaPage
+}
+
+func (tree *BPTreeDisk) WriteMetaPage(metaPage MetaPage) {
+	// Step 1: Open file
+	file, err := os.OpenFile(tree.fileName, os.O_RDWR, 0644)
+	if err != nil {
+		panic(err)
+	}
+	defer file.Close()          // Persist
+	buffer := new(bytes.Buffer) // Buffer size = 0
+	buffer.Reset()
+	metaPage.write_to_buffer(buffer)
+	tree.writeBufferToFileFirst(buffer, file)
 }

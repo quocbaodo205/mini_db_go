@@ -102,7 +102,7 @@ var TDEF_META = &TableDef{
 	name:    "@meta",
 	Types:   []uint8{TYPE_BYTES, TYPE_BYTES},
 	Cols:    []string{"key", "value"},
-	Indexes: [][]string{[]string{"key", "value"}},
+	Indexes: [][]string{{"key", "value"}},
 	Prefix:  []uint8{1},
 }
 
@@ -125,13 +125,18 @@ type DB struct {
 	kv   KV
 }
 
+func (db *DB) Open() {
+	db.kv = KV{
+		fileName: db.Path,
+	}
+	db.kv.Open()
+}
+
 // ======================= Record functions =====================
 
 // [(name, age), date, friend_with,...]
 
 // Check if all primary key presents and have all known columns
-// rec{Cols[name, date, age], Val: ['Adam', nil, 30]}
-// -> rec{Cols[name, age, date], Val: ['Adam', 30, nil]}
 func checkRecord(tdef *TableDef, rec *Record) bool {
 	// Check if rec have all the primary key columns
 	for i := 0; i < len(rec.Cols); i++ {
@@ -230,6 +235,10 @@ func makeValuesWithIndex(tdef *TableDef, indexPos int, rec *Record) []Value {
 // SELECT * FROM People WHERE name == 'Adam' and age == 30
 // Always get from primary key: index[0] , prefix[0]
 func dbGet(db *DB, tdef *TableDef, rec *Record) bool {
+	// Start a transaction
+	tx := KVTX{}
+	tx.kv.Begin(&tx)
+
 	// Step 1: reorder columns
 	// rec{Cols[name, date, age], Val: ['Adam', nil, 30]}
 	// -> rec{Cols[name, age, date], Val: ['Adam', 30, nil]}
@@ -244,8 +253,8 @@ func dbGet(db *DB, tdef *TableDef, rec *Record) bool {
 	// Step 2: encode the key into bytes
 	key := encodeKey(tdef.Prefix[0], recordVals)
 
-	// Step 3: query from kv store
-	val, found := db.kv.Get(key)
+	// Step 3: query from kv store with transaction
+	val, found := tx.Get(key)
 	if !found {
 		return false
 	}
@@ -262,6 +271,10 @@ func dbGet(db *DB, tdef *TableDef, rec *Record) bool {
 
 // INSERT INTO People (name, age, date) ('bob', 31, 20252111)
 func dbInsert(db *DB, tdef *TableDef, rec *Record) bool {
+	// Start a transaction
+	tx := KVTX{}
+	tx.kv.Begin(&tx)
+
 	// Step 1: reorder columns
 	// rec{Cols[name, date, age], Val: ['Adam', nil, 30]}
 	// -> rec{Cols[name, age, date], Val: ['Adam', 30, nil]}
@@ -271,14 +284,7 @@ func dbInsert(db *DB, tdef *TableDef, rec *Record) bool {
 	}
 
 	// Get record value
-	recordVals := make([]Value, 0)
-	for i := 0; i < len(tdef.Indexes[0]); i++ {
-		for j := 0; j < len(rec.Cols); j++ {
-			if tdef.Indexes[0][i] == rec.Cols[j] {
-				recordVals = append(recordVals, rec.Vals[j])
-			}
-		}
-	}
+	recordVals := makeValuesWithIndex(tdef, 0, rec)
 	// Step 2: encode the key into bytes
 	key := encodeKey(tdef.Prefix[0], recordVals)
 
@@ -287,12 +293,27 @@ func dbInsert(db *DB, tdef *TableDef, rec *Record) bool {
 	// Step 4: encode value
 	val := encodeKey(tdef.Prefix[0], rec.Vals[len(tdef.Indexes[0]):])
 
-	db.kv.Set(key, val)
+	// Create an update request for insert
+	req := UpdateReq{
+		Key:     key,
+		Val:     val,
+		Old:     []byte{},
+		Mode:    1,
+		Added:   false,
+		Updated: false,
+	}
+
+	tx.Update(&req)
+
 	return true
 }
 
 // DELETE FROM People WHERE name = "xyz" and age = 18
 func dbDelete(db *DB, tdef *TableDef, rec *Record) bool {
+	// Start a transaction
+	tx := KVTX{}
+	tx.kv.Begin(&tx)
+
 	// Step 1: reorder columns
 	// rec{Cols[name, date, age], Val: ['Adam', nil, 30]}
 	// -> rec{Cols[name, age, date], Val: ['Adam', 30, nil]}
@@ -302,22 +323,24 @@ func dbDelete(db *DB, tdef *TableDef, rec *Record) bool {
 	}
 
 	// Get record value
-	recordVals := make([]Value, 0)
-	for i := 0; i < len(tdef.Indexes[0]); i++ {
-		for j := 0; j < len(rec.Cols); j++ {
-			if tdef.Indexes[0][i] == rec.Cols[j] {
-				recordVals = append(recordVals, rec.Vals[j])
-			}
-		}
-	}
+	recordVals := makeValuesWithIndex(tdef, 0, rec)
 	// Step 2: encode the key into bytes
 	key := encodeKey(tdef.Prefix[0], recordVals)
 
+	req := UpdateReq{
+		Key:  key,
+		Mode: 2,
+	}
+
 	// Step 3: Delete using KV store
-	return db.kv.Del(key)
+	return tx.Update(&req)
 }
 
 func dbUpdate(db *DB, tdef *TableDef, rec *Record) bool {
+	// Start a transaction
+	tx := KVTX{}
+	tx.kv.Begin(&tx)
+
 	// Step 1: reorder columns
 	// rec{Cols[name, date, age], Val: ['Adam', nil, 30]}
 	// -> rec{Cols[name, age, date], Val: ['Adam', 30, nil]}
@@ -327,25 +350,17 @@ func dbUpdate(db *DB, tdef *TableDef, rec *Record) bool {
 	}
 
 	// Get record value
-	recordVals := make([]Value, 0)
-	for i := 0; i < len(tdef.Indexes[0]); i++ {
-		for j := 0; j < len(rec.Cols); j++ {
-			if tdef.Indexes[0][i] == rec.Cols[j] {
-				recordVals = append(recordVals, rec.Vals[j])
-			}
-		}
-	}
+	recordVals := makeValuesWithIndex(tdef, 0, rec)
 	// Step 2: encode the key into bytes
 	key := encodeKey(tdef.Prefix[0], recordVals)
 
 	// Step 3: encode value
 	val := encodeKey(tdef.Prefix[0], rec.Vals[len(tdef.Indexes[0]):])
 
-	db.kv.Set(key, val)
-	// Step 4: maintain index with update request
-	req := UpdateReq{Key: key, Val: val, Mode: 1} // Mode update
-	// maintain secondary indexes
-	handleUpdateRequest(db, tdef, &req)
+	req := UpdateReq{Key: key, Val: val, Mode: 3} // Mode update
+	tx.Update(&req)
+	// Step 4: maintain index with update request to maintain secondary indexes
+	handleUpdateRequest(db, &tx, tdef, &req)
 	return req.Updated
 }
 
@@ -434,27 +449,27 @@ func (db *DB) Delete(table string, rec Record) bool {
 // Return all records
 // SELECT * FROM People where c3 <= 2 AND c2 <= 1
 // AND c3 >=1 AND c2 >= 2
-func (db *DB) Scan(table string, sc *Scanner) []Record {
-	records := make([]Record, 0)
-	// Step 1: Check and get table definition from table name
-	tdef := getTableDef(db, table)
-	if tdef == nil {
-		return records
-	}
-	sc.tdef = tdef
-	// TODO Init the Scanner here
-	for {
-		// Assume init
-		if !sc.Valid() {
-			break
-		}
-		rec := Record{}
-		sc.Deref(&rec)
-		records = append(records, rec)
-		sc.Next()
-	}
-	return records
-}
+// func (db *DB) Scan(table string, sc *Scanner) []Record {
+// 	records := make([]Record, 0)
+// 	// Step 1: Check and get table definition from table name
+// 	tdef := getTableDef(db, table)
+// 	if tdef == nil {
+// 		return records
+// 	}
+// 	sc.tdef = tdef
+// 	// TODO Init the Scanner here
+// 	for {
+// 		// Assume init
+// 		if !sc.Valid() {
+// 			break
+// 		}
+// 		rec := Record{}
+// 		sc.Deref(&rec)
+// 		records = append(records, rec)
+// 		sc.Next()
+// 	}
+// 	return records
+// }
 
 // ========================== Maintaining indexes ==================
 type UpdateReq struct {
@@ -469,7 +484,8 @@ type UpdateReq struct {
 	Updated bool // added a new key or an old key was changed
 }
 
-func handleUpdateRequest(db *DB, tdef *TableDef, req *UpdateReq) {
+// Handing update request for other indexes.
+func handleUpdateRequest(db *DB, tx *KVTX, tdef *TableDef, req *UpdateReq) {
 	oldVals := decodeVals(req.Old)
 	newVals := decodeVals(req.Val)
 	needChangeIdx := 0
@@ -503,8 +519,15 @@ func handleUpdateRequest(db *DB, tdef *TableDef, req *UpdateReq) {
 	}
 	oldKey := encodeKey(uint8(needChangePrefix), oldRecordVals)
 	newKey := encodeKey(uint8(needChangePrefix), newRecordVals)
-	db.kv.Del(oldKey)
-	db.kv.Set(newKey, req.Key)
+	tx.Update(&UpdateReq{
+		Key:  oldKey,
+		Mode: 2,
+	})
+	tx.Update(&UpdateReq{
+		Key:  newKey,
+		Val:  req.Key,
+		Mode: 1,
+	})
 	req.Updated = true
 }
 
@@ -553,18 +576,146 @@ func (sc *Scanner) Next() {
 }
 
 // fetch the current row
-func (sc *Scanner) Deref(rec *Record) {
-	pkeyKV := sc.iter.Deref()
-	pkeyData := pkeyKV.val
-	pkeyVal, _ := sc.db.kv.Get(pkeyData[:])
+// func (sc *Scanner) Deref(rec *Record) {
+// 	pkeyKV := sc.iter.Deref()
+// 	pkeyData := pkeyKV.val
+// 	pkeyVal, _ := sc.db.kv.Get(pkeyData[:])
 
-	// Decode primary keys to columns.
-	pkeyVals := decodeVals(pkeyData[:])
-	recordVals := decodeVals(pkeyVal)
-	for i := 0; i < len(sc.tdef.Indexes[0]); i++ {
-		rec.Vals[i] = pkeyVals[i]
+// 	// Decode primary keys to columns.
+// 	pkeyVals := decodeVals(pkeyData[:])
+// 	recordVals := decodeVals(pkeyVal)
+// 	for i := 0; i < len(sc.tdef.Indexes[0]); i++ {
+// 		rec.Vals[i] = pkeyVals[i]
+// 	}
+// 	for i := len(sc.tdef.Indexes[0]); i < len(sc.tdef.Cols); i++ {
+// 		rec.Vals[i] = recordVals[i-len(sc.tdef.Indexes[0])]
+// 	}
+// }
+
+// ============================= Transaction ======================
+
+// History and conflict detection
+type StoreKey struct {
+	key []byte
+}
+
+// Design for transaction in transaction
+type CommittedTX struct {
+	mt      MetaPage
+	version uint64
+	writes  []StoreKey
+}
+
+type KVTX struct {
+	kv      *KV
+	version uint64
+
+	// Concurrency control
+	snapshot MetaPage
+	pending  *MetaPage // Can be null
+
+	// Current read and written rows
+	reads  []StoreKey
+	writes []StoreKey
+}
+
+// begin a transaction: Store snapshot
+func (kv *KV) Begin(tx *KVTX) {
+	tx.kv = kv
+	// TODO: Generate a new version
+	tx.version = 100
+	tx.snapshot = tx.kv.LoadMetaPage()
+}
+
+// end a transaction: commit updates; rollback on error
+func (kv *KV) Commit(tx *KVTX) bool {
+	mt, _ := tx.GetMeta()
+	if detectConflicts(kv, tx) {
+		return false
 	}
-	for i := len(sc.tdef.Indexes[0]); i < len(sc.tdef.Cols); i++ {
-		rec.Vals[i] = recordVals[i-len(sc.tdef.Indexes[0])]
+	kv.history = append(kv.history, CommittedTX{
+		version: tx.version,
+		writes:  tx.writes,
+		mt:      mt,
+	})
+	// Do not write to disk yet, wait for writter
+	return true
+}
+
+// end a transaction: rollback
+// Remove all pending operations
+func (kv *KV) Abort(tx *KVTX) {
+}
+
+// point query. combines captured updates with the snapshot
+// true: Get return the snapshot
+// false: Get return a pending
+func (tx *KVTX) GetMeta() (MetaPage, bool) {
+	if tx.pending != nil {
+		val := *tx.pending
+		return val, false
+	} else {
+		return tx.snapshot, true
 	}
+}
+
+func (tx *KVTX) Get(key []byte) ([]byte, bool) {
+	mt, _ := tx.GetMeta()
+	val, exist := tx.kv.Get(mt, key)
+	if exist {
+		tx.reads = append(tx.reads, StoreKey{
+			key: key,
+		})
+	}
+	return val, exist
+}
+
+func (tx *KVTX) Update(req *UpdateReq) bool {
+	mt, _ := tx.GetMeta()
+	if req.Mode == 1 { // Insert
+		*tx.pending = tx.kv.Set(mt, req.Key, req.Val)
+	} else if req.Mode == 2 { // Del
+		ok, newMetaPage := tx.kv.Del(mt, req.Key)
+		if ok {
+			*tx.pending = newMetaPage
+		}
+	} else { // Update
+		*tx.pending = tx.kv.Set(mt, req.Key, req.Val)
+	}
+	// After update, put a history write.
+	tx.writes = append(tx.writes, StoreKey{
+		req.Key,
+	})
+	return true
+}
+
+func rangesOverlap(reads []StoreKey, writes []StoreKey) bool {
+	for _, readKey := range reads {
+		for _, writeKey := range writes {
+			isEql := true
+			for idx, rk := range readKey.key {
+				if writeKey.key[idx] != rk {
+					isEql = false
+					break
+				}
+			}
+			if isEql {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func detectConflicts(kv *KV, tx *KVTX) bool {
+	// First the last transaction that is of smaller version in the history
+	for i := len(kv.history) - 1; i >= 0; i-- {
+		if tx.version >= kv.history[i].version {
+			continue
+		}
+		if rangesOverlap(tx.reads, kv.history[i].writes) {
+			return true
+		}
+	}
+	return false
 }

@@ -104,4 +104,30 @@ func TestSchema_Record(t *testing.T) {
 			t.Errorf("Value different at %v, expected = %v, actual = %v", i, expect[i], indexVals[i])
 		}
 	}
+	// TODO: compareRecord test
+}
+
+// Helper function to make a Record from a map
+func createRecordFromMap(mp map[string]any) Record {
+	rc := Record{}
+	for col, v := range mp {
+		if val, ok := v.(int64); ok {
+			rc.AddInt64(col, val)
+		} else {
+			// Must be a string
+			val := v.([]byte)
+			rc.AddStr(col, val)
+		}
+	}
+	return rc
+}
+
+// Testing all functions related to TableDef
+func TestSchema_TableDef(t *testing.T) {
+	// Init the Database
+	db := DB{
+		Path: "test_db.db",
+	}
+	db.Open()
+
 }
