@@ -532,10 +532,19 @@ func handleUpdateRequest(db *DB, tx *KVTX, tdef *TableDef, req *UpdateReq) {
 }
 
 // ========================== Scanner ==============================
+
+const (
+	CMP_GE = 1
+	CMP_LE = 2
+)
+
 type Scanner struct {
 	// the range, from Key1 to Key2
 	Key1 Record
 	Key2 Record
+	// CMP: Compare by condition
+	Cmp1 int
+	Cmp2 int
 	// internal
 	db     *DB
 	tdef   *TableDef
@@ -576,21 +585,21 @@ func (sc *Scanner) Next() {
 }
 
 // fetch the current row
-// func (sc *Scanner) Deref(rec *Record) {
-// 	pkeyKV := sc.iter.Deref()
-// 	pkeyData := pkeyKV.val
-// 	pkeyVal, _ := sc.db.kv.Get(pkeyData[:])
+func (sc *Scanner) Deref(rec *Record) {
+	pkeyKV := sc.iter.Deref()
+	pkeyData := pkeyKV.val
+	pkeyVal, _ := sc.db.kv.Get(pkeyData[:])
 
-// 	// Decode primary keys to columns.
-// 	pkeyVals := decodeVals(pkeyData[:])
-// 	recordVals := decodeVals(pkeyVal)
-// 	for i := 0; i < len(sc.tdef.Indexes[0]); i++ {
-// 		rec.Vals[i] = pkeyVals[i]
-// 	}
-// 	for i := len(sc.tdef.Indexes[0]); i < len(sc.tdef.Cols); i++ {
-// 		rec.Vals[i] = recordVals[i-len(sc.tdef.Indexes[0])]
-// 	}
-// }
+	// Decode primary keys to columns.
+	pkeyVals := decodeVals(pkeyData[:])
+	recordVals := decodeVals(pkeyVal)
+	for i := 0; i < len(sc.tdef.Indexes[0]); i++ {
+		rec.Vals[i] = pkeyVals[i]
+	}
+	for i := len(sc.tdef.Indexes[0]); i < len(sc.tdef.Cols); i++ {
+		rec.Vals[i] = recordVals[i-len(sc.tdef.Indexes[0])]
+	}
+}
 
 // ============================= Transaction ======================
 
@@ -622,7 +631,7 @@ type KVTX struct {
 // begin a transaction: Store snapshot
 func (kv *KV) Begin(tx *KVTX) {
 	tx.kv = kv
-	// TODO: Generate a new version
+	// TODO: Generate a new version, maybe the current timestamp
 	tx.version = 100
 	tx.snapshot = tx.kv.LoadMetaPage()
 }
@@ -688,6 +697,8 @@ func (tx *KVTX) Update(req *UpdateReq) bool {
 	})
 	return true
 }
+
+// TODO: Scanner in transaction
 
 func rangesOverlap(reads []StoreKey, writes []StoreKey) bool {
 	for _, readKey := range reads {
